@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#18251e">
+  <title>Raahi — Adaptive driving lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="sidebar" id="sidebar" aria-label="Scenario menu">
+    <button id="menu-close" class="icon-button menu-close" aria-label="Close menu" title="Close menu">×</button>
+    <a class="brand" href="/" aria-label="Raahi home"><span class="brand-mark">r<span>↗</span></span><span>raahi<span class="brand-sub">ADAPTIVE DRIVING LAB</span></span></a>
+    <div class="workspace-label">SIMULATION WORKSPACE <span>v0.1</span></div>
+    <div class="nav-heading">SCENARIO LIBRARY <span>05</span></div>
+    <nav id="scenarios" aria-label="Scenarios"></nav>
+    <div class="sidebar-note"><span class="note-icon">↗</span><strong>Built for the unexpected.</strong><p>Exploring autonomous navigation on unstructured Indian roads.</p><div class="tag">OBJECT-LEVEL SIMULATION</div></div>
+    <div class="sidebar-footer"><span class="status-dot"></span>Local simulation <span>SIH / 2026</span></div>
+  </aside>
+  <button id="menu-backdrop" class="menu-backdrop" aria-label="Close scenario menu" hidden tabindex="-1"></button>
+  <main>
+    <header class="topbar">
+      <div class="topbar-start">
+        <button id="menu-toggle" class="icon-button menu-toggle" aria-label="Collapse menu" aria-controls="sidebar" aria-expanded="true" title="Collapse menu">☰</button>
+        <div class="topbar-location"><span class="breadcrumb">WORKSPACE</span><span class="slash">/</span><span>Adaptive path planning</span></div>
+      </div>
+      <div class="topbar-actions">
+        <span class="outline-badge"><span class="status-dot"></span>Closed-loop engine</span>
+        <label class="theme-switch"><span>Dark mode</span><input id="dark-mode" type="checkbox" role="switch" aria-label="Dark mode"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></label>
+      </div>
+    </header>
+    <section class="page-title"><div><div class="eyebrow">PERCEIVE. PREDICT. PLAN.</div><h1>The road is unpredictable.<br><span>The plan adapts.</span></h1><p>Five Indian road environments. One adaptive planning pipeline.</p></div><button id="evaluate" class="secondary-button">▦ <span>Evaluate all scenarios</span></button></section>
+    <section class="metric-grid" aria-label="Live metrics">
+      <div class="metric"><span>VEHICLE SPEED <span class="metric-icon">↗</span></span><div><strong id="speed-value">0.0</strong><small>km/h</small></div><span class="metric-detail" id="speed-detail">Target — km/h</span></div>
+      <div class="metric"><span>REPLANNING LATENCY <span class="metric-icon">◷</span></span><div><strong id="latency-value">—</strong><small>ms</small></div><span class="metric-detail">Latest measured planner time</span></div>
+      <div class="metric"><span>MINIMUM CLEARANCE <span class="metric-icon">⊙</span></span><div><strong id="clearance-value">—</strong><small>m</small></div><span class="metric-detail">Ground-truth swept clearance</span></div>
+      <div class="metric"><span>ROUTE PROGRESS <span class="metric-icon">⚑</span></span><div><strong id="progress-value">0</strong><small>%</small></div><span class="metric-detail" id="progress-detail">0.0 s elapsed</span></div>
+    </section>
+    <div class="simulation-grid">
+      <section class="map-panel">
+        <div class="panel-heading"><div><span class="eyebrow">LIVE ENVIRONMENT</span><h2 id="scenario-title">Unmarked village road</h2></div><span id="state-badge" class="state-badge">READY</span></div>
+        <div class="canvas-wrap"><canvas id="world" aria-label="Live top-down driving simulation"></canvas><div class="map-caption"><span class="map-dot"></span> LOCAL MAP <span>METRES · TOP VIEW</span></div><div class="map-legend"><span><i class="legend-line planned"></i>Planned path</span><span><i class="legend-line predicted"></i>Predicted motion</span><span><i class="legend-dot"></i>Ego vehicle</span></div><div id="end-overlay" class="end-overlay" hidden><strong id="end-title"></strong><span id="end-description"></span><button id="next-scenario" class="primary-button">Next scenario →</button></div></div>
+        <div class="transport"><div class="transport-left"><button id="play" class="primary-button">▶ Run simulation</button><button id="reset" class="icon-button" title="Reset simulation" aria-label="Reset simulation">↺</button><button id="step" class="icon-button" title="Advance one simulation step" aria-label="Advance one simulation step">▹|</button><span class="divider"></span><label class="speed-control" for="playback">Playback <select id="playback"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label></div><span class="simulation-clock" id="clock">00:00.0</span></div>
+        <div class="scenario-caption"><span>SCENARIO BRIEF</span><p id="scenario-description"></p></div>
+      </section>
+      <aside class="inspector">
+        <section class="inspector-section"><div class="section-heading"><h3>Perception & prediction</h3><span class="mini-badge">SYNTHETIC</span></div><p class="muted">Noisy object detections → fused tracks</p><div class="sensor-grid"><label><input type="checkbox" id="camera" checked><span>◉</span>Camera</label><label><input type="checkbox" id="lidar" checked><span>⌖</span>LiDAR</label><label><input type="checkbox" id="radar" checked><span>◔</span>Radar</label></div><div class="track-heading"><span>TRACKED AGENTS</span><strong id="track-count">0</strong></div><div id="track-list" class="track-list"><p class="empty-state">Start the simulation to see fused tracks.</p></div></section>
+        <section class="inspector-section decision-section"><span class="eyebrow">BEHAVIOUR STATE</span><div class="decision"><span id="decision-icon">↗</span><strong id="decision">Standby</strong></div><p id="decision-description" class="muted">Ready to sense the environment.</p><div class="planner-info"><span>Prediction horizon<strong>6 seconds</strong></span><span>Planner interval<strong>300 ms</strong></span><span>Vehicle model<strong>Kinematic bicycle</strong></span></div></section>
+        <section class="inspector-section"><h3>Map layers</h3><div class="layer-options"><label><input id="show-path" type="checkbox" checked>Planned trajectory</label><label><input id="show-predictions" type="checkbox" checked>Motion predictions</label><label><input id="show-sensors" type="checkbox">Sensor coverage</label><label><input id="show-candidates" type="checkbox">Candidate trajectories</label></div></section>
+      </aside>
+    </div>
+    <div class="bottom-grid"><section class="chart-panel"><div class="section-heading"><h3>Speed profile</h3><span class="muted">km/h · simulation time</span></div><canvas id="speed-chart" aria-label="Vehicle speed over simulation time"></canvas></section><section class="events-panel"><div class="section-heading"><h3>Decision timeline</h3><span class="live-label">LIVE</span></div><div id="events" aria-live="polite"><p class="empty-state">Planner decisions will appear here.</p></div></section></div>
+    <section id="evaluation-panel" class="evaluation-panel" hidden><div class="section-heading"><div><span class="eyebrow">BATCH VALIDATION</span><h2 id="evaluation-title">Evaluating scenarios…</h2></div><button id="export-batch" class="secondary-button" disabled>Export results CSV ↓</button></div><p id="evaluation-note" class="muted"></p><div class="table-scroll"><table><thead><tr><th>Scenario</th><th>Status</th><th>Clearance</th><th>p95 planner</th><th>Curvature RMS</th><th>Time</th></tr></thead><tbody id="evaluation-rows"></tbody></table></div></section>
+    <footer class="page-footer"><p>Research prototype <span>·</span> Procedural 2D scenes and synthetic sensors. Native MATLAB / RoadRunner validation remains future work.</p><div><button id="record" class="text-button">◉ Record demo</button><button id="export-json" class="text-button">Export run JSON ↓</button><button id="export-csv" class="text-button">Trajectory CSV ↓</button></div></footer>
+    <div id="notice" role="status" class="toast" hidden></div>
+  </main>
+  <script type="module" src="/src/app.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "raahi-adaptive-planning-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Closed-loop mixed-traffic planning simulation with no runtime dependencies",
+  "scripts": {
+    "start": "node scripts/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "evaluate": "node scripts/evaluate.mjs",
+    "stress": "node scripts/evaluate.mjs --stress"
+  },
+  "engines": { "node": ">=20" }
+}
