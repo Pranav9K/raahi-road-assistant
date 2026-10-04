@@ -1,0 +1,14 @@
+# Deploy from Render > New > Blueprint. All simulation runs in the browser.
+services:
+  - type: web
+    name: raahi-driving-lab
+    runtime: node
+    plan: free
+    buildCommand: npm ci --no-audit --no-fund && npm test
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0

@@ -5,6 +5,10 @@ import './preferences.mjs';
 import { HISTORY_LIMIT, loadRunHistory, makeRunRecord, saveRunHistory } from './run-history.mjs';
 
 const $ = id => document.getElementById(id);
+// Fail closed to browser downloads if capabilities cannot be loaded.
+const localRecordingSave = fetch('/api/config', { signal: AbortSignal.timeout(5000) })
+  .then(response => response.ok ? response.json() : null)
+  .then(config => config?.localRecordingSave === true).catch(() => false);
 let sim = new Simulation(), running = false, lastFrame = 0, accumulator = 0, lastUI = 0;
 let batchResults = [], recorder = null, noticeTimer, batchRunning = false, cancelBatch = false;
 let lastUISignature = '', lastEventSignature = '', lastDraw = 0;
@@ -218,12 +222,14 @@ $('record').addEventListener('click', () => {
       stream.getTracks().forEach(t => t.stop());
       if (recorder === capture) { recorder = null; $('record').textContent = '◉ Record demo'; }
       if (!blob.size) return toast('The recording did not contain frames. Please try again.');
+      download(name, blob);
+      toast('Your demo is ready as a browser download.');
+      if (!await localRecordingSave) return;
       try {
-        const response = await fetch('/api/recordings', { method: 'POST', headers: { 'Content-Type': mimeType }, body: blob });
+        const response = await fetch('/api/recordings', { method: 'POST', headers: { 'Content-Type': mimeType }, body: blob, signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error(`Save returned ${response.status}`);
         const saved = await response.json(); toast(`Demo saved to ${saved.path}`);
       } catch { toast('Local save unavailable; the recording is offered as a browser download.'); }
-      download(name, blob);
     };
     capture.onerror = () => { stream.getTracks().forEach(t => t.stop()); if (recorder === capture) { recorder = null; $('record').textContent = '◉ Record demo'; } toast('Video recording failed.'); };
     capture.start(); $('record').textContent = '■ Stop recording'; running = true; updateUI();

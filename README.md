@@ -6,7 +6,7 @@ A working, local **closed-loop planning prototype** for five unstructured Indian
 
 ## Run
 
-Requires Node.js 20 or newer.
+Requires Node.js 22–24 (Node 24 is selected for Render).
 
 ```sh
 npm start
@@ -31,7 +31,13 @@ npm run evaluate  # 5 scenarios × seeds 42, 7, 2026; JSON traces + CSV metrics
 npm run stress    # 5 scenarios × seeds 1–20; summary metrics, no extra traces
 ```
 
-The equivalent commands `node scripts/server.mjs`, `node --test tests/*.test.mjs`, and `node scripts/evaluate.mjs` also work without npm. Set `PORT` to change the server port. It binds only to localhost and serves an allowlist of public files.
+The equivalent commands `node scripts/server.mjs`, `node --test tests/*.test.mjs`, and `node scripts/evaluate.mjs` also work without npm. Set `PORT` to change the server port. Local development binds to localhost; production binds to `0.0.0.0`. Both serve an allowlist of public files.
+
+## Deploy on Render
+
+The included [render.yaml](render.yaml) configures a free Node Web Service with a tested build, Node 24, and a `/healthz` health check. Push this repository, then choose **New → Blueprint** in Render. For manual setup, use build command `npm ci --no-audit --no-fund && npm test`, start command `npm start`, and `NODE_ENV=production`.
+
+Hosted recordings download directly to your device; run history stays in your browser. No database or persistent disk is required. See the [deployment guide](docs/DEPLOY_RENDER.md) for exact settings, storage behavior, and verification steps.
 
 For custom evaluation seeds in PowerShell:
 
@@ -70,7 +76,7 @@ An included [cattle-crossing demonstration](artifacts/cattle-demo.webm) shows a 
 
 1. Select a scenario, reset, and choose a playback speed (1× for real-time viewing).
 2. Click **Record demo**. Recording starts the simulation.
-3. When the run completes or you click **Stop recording**, the WebM is saved to `artifacts/demo-<timestamp>-<id>.webm` and also offered as a browser download. Local saving is limited to 32 MB. Only the canvas, including its scenario/time/speed labels, is recorded.
+3. When the run completes or you click **Stop recording**, the WebM is offered as a browser download. In local development it is also saved to `artifacts/demo-<timestamp>-<id>.webm` (up to 32 MB). Hosted production instances use downloads only. Only the canvas, including its scenario/time/speed labels, is recorded.
 4. Use **Export run JSON** or **Trajectory CSV** for numerical evidence. **Evaluate all scenarios** runs the three reference seeds with the currently selected sensor configuration and exports its own CSV.
 
 Video recording requires a browser with canvas capture and WebM MediaRecorder support. No camera or microphone permission is requested.

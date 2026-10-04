@@ -3,3 +3,6 @@ artifacts/*.webm
 !artifacts/cattle-demo.webm
 artifacts/*.png
 .DS_Store
+.env
+.env.*
+!.env.example

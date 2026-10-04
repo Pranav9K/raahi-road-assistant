@@ -10,5 +10,5 @@
     "evaluate": "node scripts/evaluate.mjs",
     "stress": "node scripts/evaluate.mjs --stress"
   },
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=22 <25" }
 }
