@@ -55,6 +55,12 @@ The simulation integrates at 10 Hz. Actor motion includes diagonal merging, osci
 
 Automated tests include successful scenarios, deterministic reproduction, missing-sensor failure, sensor range/noise, stale track removal, class-dependent prediction, vehicle limits, emergency fallback, triggered motion, and a between-ticks crossing collision. The broader 100-run check varies observation noise and dropout seeds while keeping the scene definitions fixed. See RESULTS.md for measured values.
 
+## Interactive experiments added in v0.2
+
+The run setup can vary the seeded noise sequence, scale measurement noise and missed detections, and multiply the nominal speed target. Normalized options are validated and kept separate from shared scenario definitions. A live-injection interface adds ground-truth pedestrian, cattle or barrier actors at a logged simulation step and forward distance. These actors enter the usual sensing path, so disabled sensors cannot observe an injected object. Replaying the logged schedule with the same options reproduces ego motion; tests compare every trajectory row and event, excluding machine-dependent planner timing.
+
+Run history stores up to 12 configurations, injection schedules and outcome summaries locally in the browser. No run data is sent to an external service. A rerun reconstructs the simulation rather than playing back recorded vehicle positions. Degraded conditions and arbitrary hazard combinations may fail; completion, collision and timeout outcomes remain visible. The reference results in RESULTS.md apply to the original nominal configurations.
+
 ## Remaining work for the original challenge
 
 The repository does not contain a native closed-loop Simulink model, trained perception network, trained trajectory predictor, or native RoadRunner scene assets. The MATLAB helper only replays ego trajectories and constructs timeseries. Native-tool integration, realistic sensor occlusion, road-boundary perception, stronger multi-modal prediction, reactive road users, collision checking over entire planner intervals, and adversarial weather/traffic/friction tests remain necessary to move beyond this prototype. The scene specifications in NATIVE_INTEGRATION.md make the two required RoadRunner scenes concrete but do not substitute for creating and testing those files.

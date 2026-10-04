@@ -14,6 +14,17 @@ npm start
 
 Open **http://127.0.0.1:4173**. Select a scenario and press **Run simulation**. You can pause, single-step, reset, change playback speed, toggle map layers, and disable sensors. Sensor changes reset the run so comparisons start from the same state and seed. Backgrounding the tab pauses playback.
 
+## Experiment workspace (v0.2)
+
+- **Run setup:** choose a repeatable seed, target-speed multiplier (75%, 100%, 125%), and sensor profile. Nominal uses 2.5% missed detections with normal noise; degraded uses 15% misses and 2× noise; stress uses 30% misses and 3× noise. Apply starts a fresh run. These profiles model measurement degradation, not weather physics.
+- **Live hazards:** introduce a pedestrian, cattle, or stationary obstacle ahead of the ego vehicle. An amber ring marks injected actors. Detection still depends on the enabled sensors; injection does not insert privileged tracks into the planner. Hazard type, simulation step and introduction distance are exported.
+- **Run review and history:** finished and failed runs show clearance, collisions, p95 planner latency and jerk. The last 12 summaries and their configurations persist in this browser when storage is available. **Rerun this setup** reconstructs the same sensor seed and exact hazard-injection schedule. Wall-clock latency naturally changes between reruns. The CSV run log is for comparison; export an individual JSON for its full trajectory.
+- **Cancellable evaluation:** evaluate all scenes with the active speed/sensor setup using three distinct seeds: the selected seed followed by reference seeds. Cancel leaves results for completed runs available to export. Batch runs exclude manually injected hazards and do not populate interactive history.
+- **Navigation:** dark/light mode, a retractable sidebar, large readable labels and responsive result cards. Scrollbar tracks are hidden while wheel, touch and keyboard scrolling remain available.
+- **Shortcuts:** Space runs/pauses, N advances one step, R resets, and Escape closes the drawer/dialog. Use the **?** button for help. Shortcuts ignore focused form fields and buttons.
+
+Changing conditions or injecting hazards can cause failures or timeouts. Those are recorded as failed results. The original reference results only cover the original scenario configurations; they are not guarantees for these new experiments.
+
 ```sh
 npm test       # Regression, sensing, prediction, collision and HTTP tests
 npm run evaluate  # 5 scenarios × seeds 42, 7, 2026; JSON traces + CSV metrics
@@ -51,6 +62,8 @@ The first implementation failed the oncoming-motorcycle village case. Corridor r
 
 The 100-run check varies sensor noise and missed observations; it does **not** represent 100 independent road layouts, an exhaustive safety test, or real-world validation. Emergency braking can produce high jerk. This prototype has no formal collision-avoidance guarantee outside the tested cases.
 
+The v0.2 upgrade passes 33 automated tests. An additional [sensor-profile check](artifacts/experiment-validation.json) exercises all five scenes with nominal, degraded and stress sensing at seed 42 and standard speed: all 15 runs completed without collisions. This is a limited regression check, not evidence that every speed, seed or injected-hazard combination succeeds.
+
 ## Export a demonstration
 
 An included [cattle-crossing demonstration](artifacts/cattle-demo.webm) shows a complete run at 1× playback speed.
@@ -83,6 +96,8 @@ This creates plots and time-series signals suitable for later Simulink import. *
 | `src/engine.mjs` | Sensing, tracking, prediction, planning, dynamics and validation |
 | `src/render.mjs` | Canvas map and speed chart |
 | `src/app.mjs` | UI controls, evaluation, downloads and recording |
+| `src/run-history.mjs` | Bounded browser run archive and validated rerun configurations |
+| `src/preferences.mjs` | Theme and accessible retractable menu |
 | `scripts/evaluate.mjs` | Headless batch runner and trace exporter |
 | `scripts/report.mjs` | Regenerate the metrics report from saved evaluations |
 | `matlab/replayRun.m` | Recorded ego trace import, plots and animation |

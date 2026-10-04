@@ -1,4 +1,4 @@
-import { SCENARIOS, createActors, advanceActors, roadY } from './scenarios.mjs';
+import { SCENARIOS, TYPES, createActors, advanceActors, roadY } from './scenarios.mjs';
 
 export const CONFIG = Object.freeze({ dt: 0.1, replanPeriod: 0.3, horizon: 6,
   rolloutDt: 0.2, wheelbase: 2.7, egoRadius: 2.15, maxAccel: 1.8,
@@ -7,6 +7,17 @@ export const CONFIG = Object.freeze({ dt: 0.1, replanPeriod: 0.3, horizon: 6,
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const now = () => performance.now();
+
+export function normalizeOptions(options = {}) {
+  const normalized = { seed: 42, dropout: 0.025, noiseScale: 1, speedScale: 1,
+    camera: true, lidar: true, radar: true, ...options };
+  for (const [key, min, max] of [['seed', 0, 4294967295], ['dropout', 0, 1], ['noiseScale', 0.5, 3], ['speedScale', 0.5, 1.25]]) {
+    if (!Number.isFinite(normalized[key]) || normalized[key] < min || normalized[key] > max) throw new RangeError(`Invalid ${key}: expected ${min}–${max}`);
+  }
+  if (!Number.isInteger(normalized.seed)) throw new RangeError('Seed must be an integer');
+  for (const key of ['camera', 'lidar', 'radar']) if (typeof normalized[key] !== 'boolean') throw new TypeError(`${key} must be boolean`);
+  return Object.freeze(normalized);
+}
 
 export function randomSource(seed = 42) {
   let state = seed >>> 0;
@@ -26,11 +37,12 @@ export function sense(ego, actors, rng, options = {}) {
     const lidar = sensors.lidar && d < 46;
     const radar = sensors.radar && d < 75 && forward && !['pothole', 'barrier', 'cart'].includes(a.type);
     if ((!camera && !lidar && !radar) || rng() < (options.dropout ?? 0.025)) continue;
-    const sigma = lidar ? 0.10 : camera ? 0.30 : 0.6;
+    const noiseScale = options.noiseScale ?? 1;
+    const sigma = (lidar ? 0.10 : camera ? 0.30 : 0.6) * noiseScale;
     const noise = scale => (rng() + rng() + rng() - 1.5) * scale;
     observations.push({ id: a.id, x: a.x + noise(sigma), y: a.y + noise(sigma),
-      vx: radar ? (a.active ? a.vx : 0) + noise(0.13) : null,
-      vy: radar ? (a.active ? a.actualVy ?? a.vy : 0) + noise(0.13) : null,
+      vx: radar ? (a.active ? a.vx : 0) + noise(0.13 * noiseScale) : null,
+      vy: radar ? (a.active ? a.actualVy ?? a.vy : 0) + noise(0.13 * noiseScale) : null,
       type: camera ? a.type : null, radius: a.radius, sigma,
       sources: [camera && 'camera', lidar && 'lidar', radar && 'radar'].filter(Boolean) });
   }
@@ -174,9 +186,11 @@ export function sweptClearance(egoBefore, egoAfter, actorBefore, actorAfter) {
 
 export class Simulation {
   constructor(id = 'village', options = {}) {
-    this.scenario = SCENARIOS.find(s => s.id === id);
-    if (!this.scenario) throw new Error(`Unknown scenario: ${id}`);
-    this.options = options; this.seed = options.seed ?? 42; this.rng = randomSource(this.seed);
+    const base = SCENARIOS.find(s => s.id === id);
+    if (!base) throw new Error(`Unknown scenario: ${id}`);
+    this.options = normalizeOptions(options);
+    this.scenario = { ...base, speed: base.speed * this.options.speedScale };
+    this.seed = this.options.seed; this.rng = randomSource(this.seed);
     this.ego = { x: 5, y: roadY(this.scenario, 5), yaw: Math.atan((roadY(this.scenario, 5.1) - roadY(this.scenario, 5)) / 0.1), v: 0, steer: 0, accel: 0 };
     this.actors = createActors(this.scenario); this.tracker = new FusionTracker();
     this.tracks = []; this.time = 0; this.steps = 0; this.nextPlan = 0; this.currentPlan = null;
@@ -184,9 +198,41 @@ export class Simulation {
     this.latencies = []; this.collisions = new Set(); this.minClearance = Infinity;
     this.boundaryViolations = 0; this.distance = 0; this.lastDecision = null;
     this.observations = []; this.emergencyStops = 0;
+    this.injections = []; this.scheduledHazards = [];
+  }
+  injectHazard(kind, distanceAhead = Math.max(22, this.ego.v * 3.5 + 8)) {
+    if (this.status !== 'running') throw new Error('Reset the finished run before adding a hazard.');
+    if (this.injections.length + this.scheduledHazards.length >= 100) throw new Error('This run has reached the 100-hazard limit.');
+    if (!['pedestrian', 'cattle', 'barrier'].includes(kind)) throw new Error('Unsupported hazard type');
+    if (!Number.isFinite(distanceAhead) || distanceAhead < 12 || distanceAhead > 60) throw new RangeError('Hazard distance must be 12–60 m');
+    const x = this.ego.x + distanceAhead;
+    if (x >= this.scenario.length - 8) throw new Error('Too close to the finish. Reset to test another hazard.');
+    const crossing = kind !== 'barrier';
+    const y = roadY(this.scenario, x) + (crossing ? -this.scenario.halfWidth + TYPES[kind].radius : 0);
+    const actor = { id: `injected-${this.injections.length + 1}`, type: kind, x, y, baseY: y,
+      vx: 0, vy: crossing ? kind === 'pedestrian' ? 1.5 : 1.2 : 0,
+      radius: TYPES[kind].radius, active: true, injected: true };
+    this.actors.push(actor);
+    this.injections.push({ step: this.steps, kind, distanceAhead });
+    this.events.push({ time: this.time, decision: 'HAZARD', message: `${TYPES[kind].label} introduced ${distanceAhead.toFixed(0)} m ahead` });
+    return actor;
+  }
+  scheduleHazards(records = []) {
+    if (this.steps) throw new Error('Schedule replay hazards before starting a run');
+    if (!Array.isArray(records) || records.length > 100) throw new Error('Invalid hazard schedule');
+    this.scheduledHazards = records.map(record => {
+      if (!Number.isInteger(record.step) || record.step < 0 || record.step > this.scenario.timeout / CONFIG.dt ||
+          !['pedestrian', 'cattle', 'barrier'].includes(record.kind) || !Number.isFinite(record.distanceAhead) || record.distanceAhead < 12 || record.distanceAhead > 60) {
+        throw new Error('Invalid hazard schedule entry');
+      }
+      return { step: record.step, kind: record.kind, distanceAhead: record.distanceAhead };
+    }).sort((a, b) => a.step - b.step);
   }
   step() {
     if (this.status !== 'running') return;
+    while (this.scheduledHazards[0]?.step === this.steps) {
+      const hazard = this.scheduledHazards.shift(); this.injectHazard(hazard.kind, hazard.distanceAhead);
+    }
     const dt = CONFIG.dt, before = { ...this.ego };
     const actorsBefore = this.actors.map(a => ({ ...a }));
     this.observations = sense(this.ego, this.actors, this.rng, this.options);
@@ -229,7 +275,7 @@ export class Simulation {
     const latencies = [...this.latencies].sort((a, b) => a - b);
     const rms = key => Math.sqrt(this.history.reduce((s, r) => s + r[key] ** 2, 0) / (this.history.length || 1));
     return { scenario: this.scenario.id, seed: this.seed, status: this.status,
-      completed: this.status === 'completed', collisions: this.collisions.size,
+      completed: this.status === 'completed', collisions: this.collisions.size, injectedHazards: this.injections.length,
       boundaryViolations: this.boundaryViolations, elapsedSeconds: this.time,
       progressPercent: clamp((this.ego.x - 5) / (this.scenario.length - 10) * 100, 0, 100),
       distanceMetres: this.distance, minClearanceMetres: Number.isFinite(this.minClearance) ? this.minClearance : null,
@@ -239,5 +285,5 @@ export class Simulation {
       lateralAccelerationRms: rms('lateralAcceleration'), jerkRms: rms('jerk'), emergencyStops: this.emergencyStops };
   }
   export() { return { schemaVersion: 1, config: CONFIG, scenario: this.scenario,
-    options: this.options, metrics: this.metrics(), events: this.events, trajectory: this.history }; }
+    options: this.options, injections: this.injections, metrics: this.metrics(), events: this.events, trajectory: this.history }; }
 }

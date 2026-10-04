@@ -13,6 +13,7 @@ function setTheme(dark) {
   root.dataset.theme = dark ? 'dark' : 'light';
   themeSwitch.checked = dark;
   document.querySelector('meta[name="theme-color"]').content = dark ? '#141c18' : '#f3f5ef';
+  document.dispatchEvent(new Event('raahi:viewchange'));
 }
 setTheme(read('raahi-theme') === 'dark');
 themeSwitch.addEventListener('change', () => {
@@ -44,6 +45,7 @@ document.getElementById('scenarios').addEventListener('click', event => {
   if (mobile.matches && event.target.closest('.scenario-button')) closeMenu();
 });
 document.addEventListener('keydown', event => {
+  if (document.querySelector('dialog[open]')) return;
   if (!open) return;
   if (event.key === 'Escape') { closeMenu(); return; }
   if (event.key !== 'Tab' || !mobile.matches) return;

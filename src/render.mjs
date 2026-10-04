@@ -175,6 +175,10 @@ function drawActor(ctx, p, scale, actor, tracked) {
     }
   }
   ctx.restore();
+  if (actor.injected) {
+    ctx.beginPath(); ctx.arc(p.x, p.y, actor.radius * scale + 7, 0, Math.PI * 2);
+    ctx.strokeStyle = '#efb579'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+  }
   if (type === 'ego') {
     ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#deefb4'; ctx.fillText('EGO', p.x, p.y - scale * 1.9 - 5); ctx.textAlign = 'left';
   }
