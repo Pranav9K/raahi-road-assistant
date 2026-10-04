@@ -73,3 +73,41 @@ test('terminal runs do not continue mutating and exports identify their schema',
   assert.equal(sim.export().trajectory.length, sim.steps);
 });
 test('unknown scenario fails clearly', () => assert.throws(() => new Simulation('missing'), /Unknown scenario/));
+
+test('planner rejects a crossing between rollout samples even when the endpoints are clear', () => {
+  const ego = { x: 5, y: 0, yaw: 0, v: 0, steer: 0, accel: 0 };
+  // A deliberately fast synthetic crossing isolates the sampled-collision blind spot.
+  const track = { id: 'crossing', type: 'pedestrian', x: 5, y: -8, vx: 0, vy: 80, radius: 0.4, uncertainty: 0.1 };
+  const scenario = { ...SCENARIOS[1], speed: 0 };
+  assert.ok(Math.hypot(ego.x - track.x, ego.y - track.y) > CONFIG.egoRadius + track.radius + CONFIG.safetyMargin);
+  assert.ok(predict(track, CONFIG.rolloutDt).y > 7);
+  const result = plan(ego, [track], scenario);
+  assert.equal(result.emergency, true);
+  assert.ok(result.candidates.every(candidate => !candidate.safe));
+});
+
+test('a freshly sensed conflict triggers planning before the periodic deadline', () => {
+  for (const enabled of [true, false]) {
+    const sim = new Simulation('merge', { dropout: 0, camera: enabled, lidar: enabled, radar: enabled });
+    sim.ego.v = 11; sim.step();
+    const count = sim.latencies.length, deadline = sim.nextPlan;
+    sim.injectHazard('barrier', 12);
+    assert.ok(sim.time < deadline);
+    sim.step();
+    assert.equal(sim.latencies.length, count + (enabled ? 1 : 0));
+    assert.equal(sim.reactiveReplans, enabled ? 1 : 0);
+    assert.equal(sim.collisions.size, 0);
+  }
+});
+
+test('fixed obstacle tracks filter noisy positions without inventing velocity', () => {
+  const tracker = new FusionTracker();
+  const observation = { id: 'fixed', type: 'barrier', x: 10, y: 0, vx: null, vy: null, radius: 1, sigma: 0.1, sources: ['camera', 'lidar'] };
+  tracker.update([observation], 0, 0.1);
+  const [track] = tracker.update([{ ...observation, x: 10.1, y: 0.1 }], 0.1, 0.1);
+  assert.ok(Math.abs(track.x - 10.02) < 1e-9);
+  assert.equal(track.vx, 0); assert.equal(track.vy, 0);
+  const position = { x: track.x, y: track.y };
+  tracker.update([], 0.2, 0.1);
+  assert.deepEqual({ x: track.x, y: track.y }, position);
+});

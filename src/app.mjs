@@ -25,20 +25,21 @@ SCENARIOS.forEach((scenario, i) => {
   button.addEventListener('click', () => reset(scenario.id)); $('scenarios').append(button);
 });
 function sensorOptions() { return Object.fromEntries(['camera', 'lidar', 'radar'].map(k => [k, $(k).checked])); }
-function layers() { return Object.fromEntries(['path', 'predictions', 'sensors', 'candidates'].map(k => [k, $(`show-${k}`).checked])); }
+function layers() { return { ...Object.fromEntries(['path', 'predictions', 'sensors', 'candidates'].map(k => [k, $(`show-${k}`).checked])), selectedActor: $('hazard-target').value }; }
 function toast(message) { clearTimeout(noticeTimer); $('notice').textContent = message; $('notice').hidden = false; noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
-function reset(id = sim.scenario.id, options, injections = []) {
+function reset(id = sim.scenario.id, options, injections = [], hazardEdits) {
   if (recorder?.state === 'recording') stopRecording();
   if (options) {
     experiment = { seed: options.seed, speedScale: options.speedScale, dropout: options.dropout, noiseScale: options.noiseScale };
     for (const key of ['camera', 'lidar', 'radar']) $(key).checked = options[key];
   }
   sim = new Simulation(id, { ...experiment, ...sensorOptions() });
-  sim.scheduleHazards(injections); running = false; accumulator = 0;
+  if (hazardEdits !== undefined) sim.scheduleHazardEdits(hazardEdits); else sim.scheduleHazards(injections);
+  running = false; accumulator = 0;
   lastUISignature = ''; lastEventSignature = '';
-  $('run-seed').value = sim.seed; $('target-speed').value = experiment.speedScale;
+  $('target-speed').value = experiment.speedScale;
   $('sensor-quality').value = experiment.noiseScale === 3 ? 'stress' : experiment.noiseScale === 2 ? 'degraded' : 'nominal';
-  $('setup-summary').textContent = `Seed ${sim.seed} · ${profileName(experiment)} sensors · ${Math.round(experiment.speedScale * 100)}% speed`;
+  $('setup-summary').textContent = `${profileName(experiment)} sensors · ${{ 0.75: 'Cautious', 1: 'Standard', 1.25: 'Brisk' }[experiment.speedScale] ?? 'Custom'} speed`;
   $('run-summary').hidden = true;
   $('end-overlay').hidden = true; $('scenario-title').textContent = sim.scenario.name;
   $('scenario-description').textContent = sim.scenario.description;
@@ -57,7 +58,7 @@ function finish() {
   const success = sim.status === 'completed', metrics = sim.metrics();
   $('end-overlay').hidden = false;
   $('end-title').textContent = success ? 'Route completed.' : sim.status === 'collision' ? 'Collision detected.' : sim.status === 'off-road' ? 'Road boundary exceeded.' : 'Scenario timed out.';
-  $('end-description').textContent = success ? `${metrics.elapsedSeconds.toFixed(1)} seconds · ${metrics.collisions} collisions · ${metrics.minClearanceMetres.toFixed(2)} m minimum clearance` : 'This run is a failed validation result. Reset or export the trajectory to inspect the failure.';
+  $('end-description').textContent = success ? `${metrics.elapsedSeconds.toFixed(1)} seconds · ${metrics.collisions} collisions · ${metrics.minClearanceMetres?.toFixed(2) ?? '—'} m minimum clearance` : 'This run is a failed validation result. Reset or export the trajectory to inspect the failure.';
   if (recorder?.state === 'recording') stopRecording();
   const record = makeRunRecord(sim);
   const previous = runHistory.find(r => r.scenario === sim.scenario.id);
@@ -76,16 +77,14 @@ function updateUI(force = false) {
   $('latency-value').textContent = hasRun ? sim.currentPlan.latency.toFixed(1) : '—';
   $('clearance-value').textContent = metrics.minClearanceMetres === null ? '—' : metrics.minClearanceMetres.toFixed(2);
   $('progress-value').textContent = Math.floor(metrics.progressPercent);
-  $('progress-detail').textContent = `${sim.time.toFixed(1)} s elapsed · seed ${sim.seed}`;
+  $('progress-detail').textContent = `${sim.time.toFixed(1)} s elapsed`;
   $('clock').textContent = `${String(Math.floor(sim.time / 60)).padStart(2, '0')}:${(sim.time % 60).toFixed(1).padStart(4, '0')}`;
   $('play').textContent = running ? 'Ⅱ Pause' : sim.status !== 'running' ? '↺ Replay scenario' : '▶ Run simulation';
   $('step').disabled = batchRunning || running || sim.status !== 'running';
   for (const id of ['play', 'reset', 'settings-fields', 'camera', 'lidar', 'radar', 'record']) $(id).disabled = batchRunning;
-  document.querySelectorAll('[data-hazard]').forEach(button => { button.disabled = batchRunning || sim.status !== 'running' || sim.injections.length + sim.scheduledHazards.length >= 100; });
+  updateObjectControls();
   $('route-progress').value = metrics.progressPercent;
   $('route-remaining').textContent = `${Math.max(0, sim.scenario.length - 5 - sim.ego.x).toFixed(0)} m to finish`;
-  const candidates = sim.currentPlan?.candidates ?? [];
-  $('candidate-count').textContent = candidates.length ? `${candidates.filter(c => c.safe).length} / ${candidates.length}` : '—';
   const badge = $('state-badge'); badge.textContent = sim.status !== 'running' ? sim.status.toUpperCase() : running ? 'RUNNING' : hasRun ? 'PAUSED' : 'READY';
   badge.className = `state-badge ${running || sim.status === 'completed' ? 'running' : sim.status !== 'running' ? 'failure' : ''}`;
   const decision = hasRun ? sim.decision : 'STANDBY';
@@ -139,12 +138,49 @@ $('next-scenario').addEventListener('click', () => reset(SCENARIOS[(SCENARIOS.fi
 for (const name of ['camera', 'lidar', 'radar']) $(name).addEventListener('change', () => { reset(); toast(`Sensor configuration changed. A fresh run is ready with seed ${sim.seed}.`); });
 $('run-settings').addEventListener('submit', event => {
   event.preventDefault(); if (batchRunning || !$('run-settings').reportValidity()) return;
-  experiment = { seed: Number($('run-seed').value), speedScale: Number($('target-speed').value), ...SENSOR_PROFILES[$('sensor-quality').value] };
+  experiment = { seed: experiment.seed, speedScale: Number($('target-speed').value), ...SENSOR_PROFILES[$('sensor-quality').value] };
   reset(); toast('Run settings applied. Ready for a fresh experiment.');
 });
-document.querySelectorAll('[data-hazard]').forEach(button => button.addEventListener('click', () => {
-  try { sim.injectHazard(button.dataset.hazard); updateUI(); toast('Hazard introduced. The sensors and planner will respond on the next steps.'); }
+function updateObjectControls() {
+  const select = $('hazard-target'), selected = select.value;
+  const signature = sim.actors.map(a => a.id).join('|');
+  if (select.dataset.objects !== signature) {
+    select.replaceChildren(new Option('Choose an object', ''));
+    sim.actors.forEach((actor, index) => select.add(new Option(`${TYPES[actor.type].label} ${index + 1}${actor.injected ? ' · added' : ''}`, actor.id)));
+    if (sim.actors.some(a => a.id === selected)) select.value = selected;
+    select.dataset.objects = signature;
+  }
+  const locked = batchRunning || sim.status !== 'running' || sim.scheduledHazards.length > 0;
+  $('add-hazard').disabled = locked || sim.injections.length >= 100;
+  $('hazard-kind').disabled = locked;
+  select.disabled = locked || !sim.actors.length;
+  $('remove-hazard').disabled = locked || !select.value;
+  const added = sim.actors.filter(a => a.injected).length;
+  $('clear-hazards').disabled = locked || !added;
+  $('object-count').textContent = `${sim.actors.length} objects · ${added} added`;
+  $('object-edit-note').textContent = sim.scheduledHazards.length
+    ? 'Replaying recorded edits. Reset to make a different scene.'
+    : sim.status !== 'running' ? 'Run finished. Reset to edit the scene again.'
+    : 'Edit while paused or running. Reset restores the original scene.';
+}
+function editObjects(action) {
+  if (batchRunning) return;
+  try { action(); updateUI(true); drawWorld($('world'), sim, layers()); }
   catch (error) { toast(error.message); }
+}
+$('hazard-target').addEventListener('change', updateObjectControls);
+$('add-hazard').addEventListener('click', () => editObjects(() => {
+  const actor = sim.injectHazard($('hazard-kind').value);
+  updateObjectControls(); $('hazard-target').value = actor.id;
+  toast(`${TYPES[actor.type].label} added ahead of the vehicle.`);
+}));
+$('remove-hazard').addEventListener('click', () => editObjects(() => {
+  const actor = sim.removeHazard($('hazard-target').value);
+  toast(`${TYPES[actor.type].label} removed.`);
+}));
+$('clear-hazards').addEventListener('click', () => editObjects(() => {
+  for (const actor of sim.actors.filter(a => a.injected)) sim.removeHazard(actor.id);
+  toast('All added objects removed.');
 }));
 $('show-shortcuts').addEventListener('click', () => $('shortcuts-dialog').showModal());
 document.addEventListener('keydown', event => {
@@ -200,7 +236,7 @@ $('evaluate').addEventListener('click', async () => {
       : `${batchResults.filter(r => r.completed).length} / 15 completed · ${batchResults.reduce((n, r) => n + r.collisions, 0)} collisions`;
   } catch (error) { toast(`Evaluation failed: ${error.message}`); $('evaluation-title').textContent = 'Evaluation interrupted'; }
   finally {
-    batchRunning = false; $('evaluate').textContent = '▦ Evaluate all scenarios';
+    batchRunning = false; $('evaluate').textContent = 'Test all scenes';
     $('export-batch').disabled = !batchResults.length; updateUI(); renderHistory();
   }
 });
@@ -264,15 +300,15 @@ function renderHistory() {
     const card = element('article', '', 'history-card'), heading = element('div', '', 'history-heading');
     heading.append(element('strong', scenario.shortName), element('span', record.metrics.status, `history-status ${record.metrics.completed ? 'result-pass' : 'result-fail'}`));
     const sensors = ['camera', 'lidar', 'radar'].filter(key => record.options[key]).join(', ') || 'all disabled';
-    const config = element('p', `Seed ${record.options.seed} · ${profileName(record.options)} · ${Math.round(record.options.speedScale * 100)}% speed · ${record.injections.length} ${record.injections.length === 1 ? 'hazard' : 'hazards'}`, 'muted');
+    const config = element('p', `${profileName(record.options)} · ${Math.round(record.options.speedScale * 100)}% speed · ${record.injections.length} added · ${record.hazardEdits?.filter(e => e.action === 'remove').length ?? 0} removed`, 'muted');
     const sensorLine = element('p', `Sensors: ${sensors}`, 'muted');
     const facts = element('p', `${record.metrics.elapsedSeconds.toFixed(1)} s · ${record.metrics.collisions} collisions · ${record.metrics.minClearanceMetres?.toFixed(2) ?? '—'} m clearance`, 'history-facts');
     const action = element('button', '↻ Rerun this setup', 'secondary-button'); action.disabled = batchRunning;
     action.setAttribute('aria-label', `Rerun ${scenario.shortName}, seed ${record.options.seed}`);
     action.addEventListener('click', () => {
-      reset(record.scenario, record.options, record.injections); toggleRunning();
+      reset(record.scenario, record.options, record.injections, record.hazardEdits); toggleRunning();
       $('scenario-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
-      toast('Rerunning the original settings and hazard timing.');
+      toast(record.plannerVersion === 2 ? 'Replaying the settings and object edits.' : 'Replaying these settings with the updated planner. Outcomes may differ from older runs.');
     });
     card.append(heading, config, sensorLine, facts, action); $('run-history').append(card);
   }

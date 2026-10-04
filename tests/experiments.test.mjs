@@ -82,3 +82,70 @@ test('run history is bounded, reloadable and resilient to corrupt or unavailable
   assert.equal(saveRunHistory(undefined, [record]), false);
   assert.deepEqual(loadRunHistory(undefined), []);
 });
+
+test('removing objects updates the world while sensor tracks coast and expire normally', () => {
+  const sim = new Simulation('village', { dropout: 0 });
+  const added = sim.injectHazard('barrier', 22);
+  sim.step();
+  assert.ok(sim.tracks.some(t => t.id === added.id));
+  sim.removeHazard(added.id);
+  assert.ok(!sim.actors.some(a => a.id === added.id));
+  assert.ok(sim.tracks.some(t => t.id === added.id), 'UI edits must not directly delete sensor tracks');
+  for (let i = 0; i < 15; i++) sim.step();
+  assert.ok(!sim.tracks.some(t => t.id === added.id));
+  sim.removeHazard('hole-1');
+  assert.equal(sim.metrics().removedObjects, 2);
+  assert.throws(() => sim.removeHazard('hole-1'), /no longer/);
+  const next = sim.injectHazard('pedestrian', 25);
+  assert.notEqual(next.id, added.id, 'Removed IDs must not be reused');
+  assert.ok(new Simulation('village').actors.some(a => a.id === 'hole-1'));
+});
+
+test('ordered additions and removals survive saving and reproduce an entire run', () => {
+  const first = new Simulation('cattle', { seed: 17 });
+  const temporary = first.injectHazard('barrier', 25);
+  first.removeHazard(temporary.id); // Same-step order matters.
+  first.removeHazard('cow-2');
+  for (let i = 0; i < 30; i++) first.step();
+  const pedestrian = first.injectHazard('pedestrian', 25);
+  for (let i = 0; i < 15; i++) first.step();
+  first.removeHazard(pedestrian.id);
+  first.run();
+  const saved = makeRunRecord(first);
+  let stored = '';
+  const storage = { getItem: () => stored, setItem: (_, value) => { stored = value; } };
+  saveRunHistory(storage, [saved]);
+  const [loaded] = loadRunHistory(storage);
+  assert.deepEqual(loaded.hazardEdits, first.hazardEdits);
+  const replay = new Simulation(loaded.scenario, loaded.options);
+  replay.scheduleHazardEdits(loaded.hazardEdits);
+  assert.throws(() => replay.injectHazard('barrier'), /replay/);
+  assert.throws(() => replay.removeHazard('cow-1'), /replay/);
+  replay.run();
+  assert.deepEqual(replay.history, first.history);
+  assert.deepEqual(replay.events, first.events);
+  assert.deepEqual(replay.hazardEdits, first.hazardEdits);
+});
+
+test('empty edited scenes finish without inventing a clearance measurement', () => {
+  const sim = new Simulation('cattle');
+  for (const actor of [...sim.actors]) sim.removeHazard(actor.id);
+  const result = sim.run();
+  assert.equal(result.status, 'completed');
+  assert.equal(result.minClearanceMetres, null);
+  assert.equal(result.collisions, 0);
+  assert.throws(() => sim.removeHazard('cow-1'), /finished/);
+});
+
+test('replay rejects invalid or out-of-order removal targets without changing its queue', () => {
+  const sim = new Simulation('cattle');
+  for (const edits of [null, [{ action: 'remove', step: 0, id: 'missing' }],
+    [{ action: 'remove', step: 0, id: 'cow-1' }, { action: 'remove', step: 1, id: 'cow-1' }],
+    [{ action: 'add', step: 0, id: 'injected-2', kind: 'barrier', distanceAhead: 22 }]]) {
+    assert.throws(() => sim.scheduleHazardEdits(edits));
+    assert.equal(sim.scheduledHazards.length, 0);
+  }
+  sim.scheduleHazards([{ step: 4, kind: 'cattle', distanceAhead: 22 }, { step: 2, kind: 'barrier', distanceAhead: 25 }]);
+  for (let i = 0; i < 5; i++) sim.step();
+  assert.deepEqual(sim.injections.map(i => i.kind), ['barrier', 'cattle']);
+});

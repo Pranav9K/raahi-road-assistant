@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node scripts/server.mjs",
     "test": "node --test tests/*.test.mjs",
+    "validate:planner": "node scripts/validate-planner.mjs",
     "evaluate": "node scripts/evaluate.mjs",
     "stress": "node scripts/evaluate.mjs --stress"
   },

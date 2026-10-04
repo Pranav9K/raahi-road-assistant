@@ -6,7 +6,8 @@ export function makeRunRecord(simulation) {
   const data = simulation.export();
   return { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: new Date().toISOString(), scenario: data.scenario.id,
-    options: { ...data.options }, injections: data.injections.map(h => ({ ...h })), metrics: { ...data.metrics } };
+    options: { ...data.options }, injections: data.injections.map(h => ({ ...h })),
+    hazardEdits: data.hazardEdits.map(edit => ({ ...edit })), plannerVersion: data.plannerVersion, metrics: { ...data.metrics } };
 }
 export function loadRunHistory(storage) {
   try {
@@ -17,7 +18,8 @@ export function loadRunHistory(storage) {
         if (!record || typeof record.id !== 'string' || !Number.isFinite(Date.parse(record.createdAt)) || !record.options || !Array.isArray(record.injections)) return false;
         record.options = normalizeOptions(record.options);
         const simulation = new Simulation(record.scenario, record.options);
-        simulation.scheduleHazards(record.injections);
+        if (record.hazardEdits !== undefined) simulation.scheduleHazardEdits(record.hazardEdits);
+        else simulation.scheduleHazards(record.injections);
         const m = record.metrics;
         if (m) m.completed = m.status === 'completed';
         return m && ['completed', 'collision', 'off-road', 'timeout'].includes(m.status) &&

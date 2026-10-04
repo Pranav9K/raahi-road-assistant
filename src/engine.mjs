@@ -65,13 +65,16 @@ export class FusionTracker {
         const elapsed = Math.max(dt, time - tr.lastSeen);
         const measuredVx = o.vx ?? clamp((o.x - tr.lastX) / elapsed, -15, 15);
         const measuredVy = o.vy ?? clamp((o.y - tr.lastY) / elapsed, -10, 10);
-        tr.x += 0.8 * (o.x - tr.x); tr.y += 0.8 * (o.y - tr.y);
+        const positionGain = ['pothole', 'barrier'].includes(o.type ?? tr.type) ? 0.2 : 0.8;
+        tr.x += positionGain * (o.x - tr.x); tr.y += positionGain * (o.y - tr.y);
         const gain = o.vx === null ? 0.15 : 0.65;
         tr.vx += gain * (measuredVx - tr.vx); tr.vy += gain * (measuredVy - tr.vy);
         tr.type = o.type ?? tr.type; tr.sources = o.sources;
         tr.uncertainty = Math.max(o.sigma, tr.uncertainty * 0.65);
         tr.lastX = o.x; tr.lastY = o.y; tr.lastSeen = time;
       }
+      // Fixed obstacles must not acquire apparent motion from measurement noise.
+      if (['pothole', 'barrier'].includes(tr.type)) { tr.vx = 0; tr.vy = 0; }
     }
     for (const [id, tr] of this.tracks) if (time - tr.lastSeen > CONFIG.trackTTL) this.tracks.delete(id);
     return [...this.tracks.values()];
@@ -124,6 +127,9 @@ export function bicycleStep(state, command, dt) {
 
 export function plan(ego, tracks, scenario, previousOffset = 0) {
   const started = now();
+  // All candidates share the same prediction times; compute each forecast once.
+  const forecasts = tracks.map(track => ({ track, points: Array.from({ length: Math.round(CONFIG.horizon / CONFIG.rolloutDt) + 1 },
+    (_, i) => predict(track, i * CONFIG.rolloutDt)) }));
   const outerOffset = scenario.halfWidth - CONFIG.egoRadius - 0.25;
   const offsets = [0, -1.6, 1.6, -3.2, 3.2, -outerOffset, outerOffset]
     .filter(o => Math.abs(o) < scenario.halfWidth - CONFIG.egoRadius - 0.15);
@@ -137,6 +143,7 @@ export function plan(ego, tracks, scenario, previousOffset = 0) {
       const trajectory = [];
       for (let step = 1; step <= CONFIG.horizon / CONFIG.rolloutDt; step++) {
         const t = step * CONFIG.rolloutDt;
+        const before = state;
         state = bicycleStep(state, control(state, path, targetSpeed, false, CONFIG.rolloutDt), CONFIG.rolloutDt);
         trajectory.push({ x: state.x, y: state.y, t, v: state.v });
         const edgeClearance = scenario.halfWidth - Math.abs(state.y - roadY(scenario, state.x)) - CONFIG.egoRadius;
@@ -144,9 +151,9 @@ export function plan(ego, tracks, scenario, previousOffset = 0) {
         const lateralAccel = Math.abs(state.v * state.v / CONFIG.wheelbase * Math.tan(state.steer));
         if (lateralAccel > 3) { safe = false; break; }
         comfort += lateralAccel;
-        for (const track of tracks) {
-          const p = predict(track, t);
-          const clearance = distance(state, p) - CONFIG.egoRadius - p.radius - p.uncertainty - CONFIG.safetyMargin;
+        for (const { track, points } of forecasts) {
+          const p = points[step];
+          const clearance = sweptClearance(before, state, points[step - 1], p) - p.uncertainty - CONFIG.safetyMargin;
           minClearance = Math.min(minClearance, clearance);
           if (clearance < 0) { safe = false; break; }
           // Reserve an approaching vehicle's corridor beyond the finite rollout.
@@ -171,6 +178,22 @@ export function plan(ego, tracks, scenario, previousOffset = 0) {
     -scenario.halfWidth + CONFIG.egoRadius, scenario.halfWidth - CONFIG.egoRadius), Math.max(ego.v, 4)),
     targetSpeed: 0, offset: previousOffset, trajectory: [], safe: false };
   return { ...(best ?? fallback), candidates, latency: now() - started, emergency: !best };
+}
+
+// Recheck the currently selected command against fresh observations between
+// regular planning cycles. This monitor receives tracks, never world actors.
+export function hasImmediateConflict(ego, tracks, currentPlan) {
+  if (!currentPlan || currentPlan.emergency) return false;
+  let state = ego;
+  for (let i = 1; i <= 8; i++) {
+    const before = state, t = i * CONFIG.dt;
+    state = bicycleStep(state, control(state, currentPlan.path, currentPlan.targetSpeed, false, CONFIG.dt), CONFIG.dt);
+    for (const track of tracks) {
+      const a = predict(track, t - CONFIG.dt), b = predict(track, t);
+      if (sweptClearance(before, state, a, b) - b.uncertainty - CONFIG.safetyMargin < 0) return true;
+    }
+  }
+  return false;
 }
 
 // The independent collision oracle uses ground truth, never tracker estimates.
@@ -198,11 +221,13 @@ export class Simulation {
     this.latencies = []; this.collisions = new Set(); this.minClearance = Infinity;
     this.boundaryViolations = 0; this.distance = 0; this.lastDecision = null;
     this.observations = []; this.emergencyStops = 0;
-    this.injections = []; this.scheduledHazards = [];
+    this.injections = []; this.hazardEdits = []; this.scheduledHazards = []; this.applyingReplay = false;
+    this.reactiveReplans = 0;
   }
   injectHazard(kind, distanceAhead = Math.max(22, this.ego.v * 3.5 + 8)) {
     if (this.status !== 'running') throw new Error('Reset the finished run before adding a hazard.');
-    if (this.injections.length + this.scheduledHazards.length >= 100) throw new Error('This run has reached the 100-hazard limit.');
+    if (this.scheduledHazards.length && !this.applyingReplay) throw new Error('Reset before editing a scheduled replay.');
+    if (this.injections.length + this.scheduledHazards.filter(e => e.action === 'add').length >= 100) throw new Error('This run has reached the 100-hazard limit.');
     if (!['pedestrian', 'cattle', 'barrier'].includes(kind)) throw new Error('Unsupported hazard type');
     if (!Number.isFinite(distanceAhead) || distanceAhead < 12 || distanceAhead > 60) throw new RangeError('Hazard distance must be 12–60 m');
     const x = this.ego.x + distanceAhead;
@@ -214,30 +239,62 @@ export class Simulation {
       radius: TYPES[kind].radius, active: true, injected: true };
     this.actors.push(actor);
     this.injections.push({ step: this.steps, kind, distanceAhead });
+    this.hazardEdits.push({ action: 'add', step: this.steps, id: actor.id, kind, distanceAhead });
     this.events.push({ time: this.time, decision: 'HAZARD', message: `${TYPES[kind].label} introduced ${distanceAhead.toFixed(0)} m ahead` });
     return actor;
   }
+  removeHazard(id) {
+    if (this.status !== 'running') throw new Error('Reset the finished run before removing an object.');
+    if (this.scheduledHazards.length && !this.applyingReplay) throw new Error('Reset before editing a scheduled replay.');
+    const index = this.actors.findIndex(actor => actor.id === id);
+    if (index < 0) throw new Error('That object is no longer in the scene.');
+    const [actor] = this.actors.splice(index, 1);
+    this.hazardEdits.push({ action: 'remove', step: this.steps, id });
+    this.events.push({ time: this.time, decision: 'HAZARD', message: `${TYPES[actor.type].label} removed from the scene` });
+    // Existing tracks expire through normal sensor dropout handling, not privileged deletion.
+    return actor;
+  }
   scheduleHazards(records = []) {
-    if (this.steps) throw new Error('Schedule replay hazards before starting a run');
     if (!Array.isArray(records) || records.length > 100) throw new Error('Invalid hazard schedule');
-    this.scheduledHazards = records.map(record => {
+    this.scheduleHazardEdits(records.map(record => ({ ...record })).sort((a, b) => a.step - b.step)
+      .map((record, i) => ({ ...record, action: 'add', id: `injected-${i + 1}` })));
+  }
+  scheduleHazardEdits(records = []) {
+    if (this.steps || this.hazardEdits.length) throw new Error('Schedule replay hazards before editing or starting a run');
+    if (!Array.isArray(records) || records.length > 300) throw new Error('Invalid hazard schedule');
+    const known = new Set(this.actors.map(a => a.id)); let additions = 0;
+    const scheduled = records.map(record => {
+      if (!record || !Number.isInteger(record.step)) throw new Error('Invalid hazard schedule entry');
+      return { ...record };
+    }).sort((a, b) => a.step - b.step).map(record => {
       if (!Number.isInteger(record.step) || record.step < 0 || record.step > this.scenario.timeout / CONFIG.dt ||
-          !['pedestrian', 'cattle', 'barrier'].includes(record.kind) || !Number.isFinite(record.distanceAhead) || record.distanceAhead < 12 || record.distanceAhead > 60) {
-        throw new Error('Invalid hazard schedule entry');
+          !['add', 'remove'].includes(record.action)) throw new Error('Invalid hazard schedule entry');
+      if (record.action === 'remove') {
+        if (!known.delete(record.id)) throw new Error('Invalid removal target in replay');
+        return { action: 'remove', step: record.step, id: record.id };
       }
-      return { step: record.step, kind: record.kind, distanceAhead: record.distanceAhead };
-    }).sort((a, b) => a.step - b.step);
+      if (++additions > 100 || record.id !== `injected-${additions}` || !['pedestrian', 'cattle', 'barrier'].includes(record.kind) ||
+          !Number.isFinite(record.distanceAhead) || record.distanceAhead < 12 || record.distanceAhead > 60) throw new Error('Invalid hazard schedule entry');
+      known.add(record.id);
+      return { action: 'add', step: record.step, id: record.id, kind: record.kind, distanceAhead: record.distanceAhead };
+    });
+    this.scheduledHazards = scheduled;
   }
   step() {
     if (this.status !== 'running') return;
     while (this.scheduledHazards[0]?.step === this.steps) {
-      const hazard = this.scheduledHazards.shift(); this.injectHazard(hazard.kind, hazard.distanceAhead);
+      const hazard = this.scheduledHazards.shift();
+      this.applyingReplay = true;
+      try { if (hazard.action === 'remove') this.removeHazard(hazard.id); else this.injectHazard(hazard.kind, hazard.distanceAhead); }
+      finally { this.applyingReplay = false; }
     }
     const dt = CONFIG.dt, before = { ...this.ego };
     const actorsBefore = this.actors.map(a => ({ ...a }));
     this.observations = sense(this.ego, this.actors, this.rng, this.options);
     this.tracks = this.tracker.update(this.observations, this.time, dt);
-    if (this.time + 1e-6 >= this.nextPlan) {
+    const periodic = this.time + 1e-6 >= this.nextPlan;
+    if (periodic || hasImmediateConflict(this.ego, this.tracks, this.currentPlan)) {
+      if (!periodic) this.reactiveReplans++;
       this.currentPlan = plan(this.ego, this.tracks, this.scenario, this.currentPlan?.offset ?? 0);
       this.latencies.push(this.currentPlan.latency); this.nextPlan = this.time + CONFIG.replanPeriod;
     }
@@ -276,6 +333,7 @@ export class Simulation {
     const rms = key => Math.sqrt(this.history.reduce((s, r) => s + r[key] ** 2, 0) / (this.history.length || 1));
     return { scenario: this.scenario.id, seed: this.seed, status: this.status,
       completed: this.status === 'completed', collisions: this.collisions.size, injectedHazards: this.injections.length,
+      removedObjects: this.hazardEdits.filter(e => e.action === 'remove').length, reactiveReplans: this.reactiveReplans,
       boundaryViolations: this.boundaryViolations, elapsedSeconds: this.time,
       progressPercent: clamp((this.ego.x - 5) / (this.scenario.length - 10) * 100, 0, 100),
       distanceMetres: this.distance, minClearanceMetres: Number.isFinite(this.minClearance) ? this.minClearance : null,
@@ -285,5 +343,6 @@ export class Simulation {
       lateralAccelerationRms: rms('lateralAcceleration'), jerkRms: rms('jerk'), emergencyStops: this.emergencyStops };
   }
   export() { return { schemaVersion: 1, config: CONFIG, scenario: this.scenario,
-    options: this.options, injections: this.injections, metrics: this.metrics(), events: this.events, trajectory: this.history }; }
+    options: this.options, injections: this.injections, hazardEdits: this.hazardEdits,
+    plannerVersion: 2, metrics: this.metrics(), events: this.events, trajectory: this.history }; }
 }

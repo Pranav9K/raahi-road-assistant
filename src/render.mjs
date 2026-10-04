@@ -126,11 +126,17 @@ export function drawWorld(canvas, sim, layers) {
     if (p.x < -40 || p.x > w + 40 || p.y < -50 || p.y > h + 50) continue;
     const tracked = sim.tracks.some(t => t.id === actor.id);
     drawActor(ctx, p, scale, actor, tracked);
+    if (layers.selectedActor === actor.id) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, actor.radius * scale + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.font = '12px sans-serif'; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
+      ctx.fillText('Selected', p.x, p.y - actor.radius * scale - 16); ctx.textAlign = 'left';
+    }
   }
   drawActor(ctx, xy(sim.ego), scale, { ...sim.ego, type: 'ego' }, true);
   // Included in the canvas recording, unlike HTML controls.
   ctx.font = '11px monospace'; ctx.fillStyle = '#aebfda'; ctx.textAlign = 'right';
-  ctx.fillText(`${sim.scenario.shortName.toUpperCase()}  /  SEED ${sim.seed}`, w - 15, 24);
+  ctx.fillText(sim.scenario.shortName.toUpperCase(), w - 15, 24);
   ctx.fillText(`${sim.time.toFixed(1)} s   ${(sim.ego.v * 3.6).toFixed(1)} km/h   ${sim.decision}`, w - 15, h - 58);
   ctx.textAlign = 'left';
 }
@@ -186,6 +192,7 @@ function drawActor(ctx, p, scale, actor, tracked) {
 
 export function drawSpeedChart(canvas, sim) {
   const { ctx, w, h } = fit(canvas);
+  if (!w || !h) return;
   ctx.clearRect(0, 0, w, h);
   const maxSpeed = Math.ceil(sim.scenario.speed * 3.6 / 10) * 10;
   const theme = getComputedStyle(document.documentElement);
