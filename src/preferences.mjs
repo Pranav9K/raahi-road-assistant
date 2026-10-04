@@ -12,7 +12,7 @@ function save(key, value) { try { localStorage.setItem(key, value); } catch { /*
 function setTheme(dark) {
   root.dataset.theme = dark ? 'dark' : 'light';
   themeSwitch.checked = dark;
-  document.querySelector('meta[name="theme-color"]').content = dark ? '#141c18' : '#f3f5ef';
+  document.querySelector('meta[name="theme-color"]').content = dark ? '#0e1422' : '#f3f5fa';
   document.dispatchEvent(new Event('raahi:viewchange'));
 }
 setTheme(read('raahi-theme') === 'dark');

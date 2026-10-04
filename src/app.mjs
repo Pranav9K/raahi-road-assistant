@@ -89,6 +89,7 @@ function updateUI(force = false) {
   const badge = $('state-badge'); badge.textContent = sim.status !== 'running' ? sim.status.toUpperCase() : running ? 'RUNNING' : hasRun ? 'PAUSED' : 'READY';
   badge.className = `state-badge ${running || sim.status === 'completed' ? 'running' : sim.status !== 'running' ? 'failure' : ''}`;
   const decision = hasRun ? sim.decision : 'STANDBY';
+  $('decision').closest('.decision-section').dataset.decision = decision;
   $('decision').textContent = { CRUISE: 'Cruising', YIELD: 'Yielding', AVOID: 'Avoiding', FOLLOW: 'Following', BRAKE: 'Braking', STANDBY: 'Standby' }[decision];
   $('decision-icon').textContent = { CRUISE: '↗', YIELD: 'Ⅱ', AVOID: '↝', FOLLOW: '→', BRAKE: '!', STANDBY: '↗' }[decision];
   $('decision-description').textContent = sim.events.findLast(e => e.decision !== 'HAZARD')?.message ?? 'Ready to sense the environment.';
@@ -108,6 +109,7 @@ function updateUI(force = false) {
   if (!sim.events.length) { const p = document.createElement('p'); p.className = 'empty-state'; p.textContent = 'Planner decisions will appear here.'; $('events').append(p); }
   for (const event of sim.events.slice(-12).reverse()) {
     const row = document.createElement('div'); row.className = 'event-row';
+    row.dataset.decision = event.decision;
     row.innerHTML = `<time>${event.time.toFixed(1)}s</time><i></i><span>${event.message}</span>`; $('events').append(row);
   }
   }
